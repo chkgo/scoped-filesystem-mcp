@@ -19,7 +19,7 @@ jobs:
           - macos-latest
           - windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Configure temporary paths
         shell: bash
         run: |
@@ -71,7 +71,7 @@ jobs:
           - goos: windows
             goarch: amd64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Configure temporary paths
         run: echo "GOCACHE=$RUNNER_TEMP/scopedfs-portability-gocache" >> "$GITHUB_ENV"
       - uses: actions/setup-go@v6
@@ -91,7 +91,7 @@ jobs:
           if [ "${{ matrix.goos }}" = windows ]; then
             echo "Windows edit and system Recycle Bin operations remain unavailable and fail closed until native parity is proven." >> "$GITHUB_STEP_SUMMARY"
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: scoped-filesystem-mcp-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/*
@@ -101,7 +101,7 @@ jobs:
     name: Repository checks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
         with:
           go-version: 1.26.x
