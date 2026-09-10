@@ -11,7 +11,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"golang.org/x/sys/unix"
+	"github.com/chkgo/scoped-filesystem-mcp/internal/platform"
 
 	"github.com/chkgo/scoped-filesystem-mcp/internal/access"
 	"github.com/chkgo/scoped-filesystem-mcp/internal/config"
@@ -103,8 +103,8 @@ func (s *Service) CreateDirectory(ctx context.Context, root, path string, create
 	if name == "" {
 		return WriteResult{}, newError(root, path, config.OpCreate, "destination_exists", nil)
 	}
-	if err := unix.Mkdirat(int(parent.Fd()), name, 0o755); err != nil {
-		if errors.Is(err, unix.EEXIST) {
+	if err := platform.MkdirAt(parent, name, 0o755); err != nil {
+		if errors.Is(err, os.ErrExist) {
 			return WriteResult{}, newError(root, path, config.OpCreate, "destination_exists", err)
 		}
 		return WriteResult{}, MapError(root, path, config.OpCreate, err)
@@ -141,7 +141,7 @@ func (s *Service) CreateText(ctx context.Context, root, path, content string, cr
 	defer func() {
 		if created {
 			_ = file.Close()
-			_ = unix.Unlinkat(int(parent.Fd()), temporaryName, 0)
+			_ = platform.RemoveAt(parent, temporaryName, false)
 		}
 	}()
 	if err := ctx.Err(); err != nil {
@@ -165,7 +165,7 @@ func (s *Service) CreateText(ctx context.Context, root, path, content string, cr
 		return WriteResult{}, newError(root, path, config.OpCreate, "filesystem_unavailable", err)
 	}
 	if err := s.renameExclusive(parent, temporaryName, parent, name); err != nil {
-		if errors.Is(err, unix.EEXIST) {
+		if errors.Is(err, os.ErrExist) {
 			return WriteResult{}, newError(root, path, config.OpCreate, "destination_exists", err)
 		}
 		return WriteResult{}, MapError(root, path, config.OpCreate, err)
@@ -179,6 +179,9 @@ func (s *Service) CreateText(ctx context.Context, root, path, content string, cr
 func (s *Service) EditText(ctx context.Context, root, path string, request EditRequest) (*WriteResult, *Conflict, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, newError(root, path, config.OpEdit, "filesystem_unavailable", err)
+	}
+	if err := s.OperationError(config.OpEdit); err != nil {
+		return nil, nil, MapError(root, path, config.OpEdit, err)
 	}
 	if !utf8.ValidString(request.ProposedContent) {
 		return nil, nil, newError(root, path, config.OpEdit, "invalid_edit", nil)
@@ -223,16 +226,15 @@ func (s *Service) createParent(root, path string, p access.Path, createParents b
 			parent.Close()
 			return nil, "", newError(root, path, config.OpCreate, "path_not_found", nil)
 		}
-		if err := unix.Mkdirat(int(parent.Fd()), component, 0o755); err != nil && !errors.Is(err, unix.EEXIST) {
+		if err := platform.MkdirAt(parent, component, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
 			parent.Close()
 			return nil, "", MapError(root, path, config.OpCreate, err)
 		}
-		fd, err := unix.Openat(int(parent.Fd()), component, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+		next, err := platform.OpenDirectoryAt(parent, component)
 		if err != nil {
 			parent.Close()
 			return nil, "", MapError(root, path, config.OpCreate, err)
 		}
-		next := os.NewFile(uintptr(fd), component)
 		parent.Close()
 		parent = next
 	}
@@ -261,11 +263,10 @@ func (s *Service) readTextAt(ctx context.Context, root, path string, operation c
 			return "", nil, MapError(root, path, operation, err)
 		}
 	}
-	fd, err := unix.Openat(int(parent.Fd()), name, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+	file, err := platform.OpenFileAt(parent, name, os.O_RDONLY, 0)
 	if err != nil {
 		return "", nil, MapError(root, path, operation, err)
 	}
-	file := os.NewFile(uintptr(fd), name)
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil {
@@ -308,10 +309,10 @@ func (s *Service) replaceText(ctx context.Context, root, path, canonicalRelative
 	defer func() {
 		if removeTemporary {
 			_ = temporary.Close()
-			_ = unix.Unlinkat(int(parent.Fd()), temporaryName, 0)
+			_ = platform.RemoveAt(parent, temporaryName, false)
 		}
 	}()
-	if err := unix.Fchmod(int(temporary.Fd()), uint32(info.Mode().Perm())); err != nil {
+	if err := temporary.Chmod(info.Mode().Perm()); err != nil {
 		return nil, nil, MapError(root, path, config.OpEdit, err)
 	}
 	if err := ctx.Err(); err != nil {
@@ -351,7 +352,7 @@ func (s *Service) replaceText(ctx context.Context, root, path, canonicalRelative
 	}
 	recoveryPath := temporaryRecoveryPath(canonicalRelative, temporaryName)
 	if err := s.swapNames(parent, temporaryName, name); err != nil {
-		if errors.Is(err, unix.ENOTSUP) || errors.Is(err, unix.EOPNOTSUPP) {
+		if errors.Is(err, platform.ErrAtomicReplaceUnsupported) {
 			return nil, nil, newError(root, path, config.OpEdit, "atomic_replace_unsupported", err)
 		}
 		return nil, nil, MapError(root, path, config.OpEdit, err)
@@ -406,16 +407,16 @@ func (s *Service) replaceText(ctx context.Context, root, path, canonicalRelative
 
 func (s *Service) swapNames(parent *os.File, from, to string) error {
 	if s.renameSwap != nil {
-		return s.renameSwap(int(parent.Fd()), from, int(parent.Fd()), to, unix.RENAME_SWAP)
+		return s.renameSwap(parent, from, to)
 	}
-	return unix.RenameatxNp(int(parent.Fd()), from, int(parent.Fd()), to, unix.RENAME_SWAP)
+	return platform.Exchange(parent, from, to)
 }
 
 func (s *Service) renameExclusive(sourceParent *os.File, sourceName string, destinationParent *os.File, destinationName string) error {
 	if s.renameAt != nil {
-		return s.renameAt(int(sourceParent.Fd()), sourceName, int(destinationParent.Fd()), destinationName)
+		return s.renameAt(sourceParent, sourceName, destinationParent, destinationName)
 	}
-	return unix.RenameatxNp(int(sourceParent.Fd()), sourceName, int(destinationParent.Fd()), destinationName, unix.RENAME_EXCL)
+	return platform.RenameNoReplace(sourceParent, sourceName, destinationParent, destinationName)
 }
 
 func (s *Service) write(file *os.File, data []byte) error {
@@ -438,16 +439,16 @@ func createTemporaryFile(parent *os.File, mode os.FileMode, prefix string) (*os.
 		if err != nil {
 			return nil, "", err
 		}
-		fd, err := unix.Openat(int(parent.Fd()), name, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_CLOEXEC|unix.O_NOFOLLOW, uint32(mode.Perm()))
-		if errors.Is(err, unix.EEXIST) {
+		file, err := platform.OpenFileAt(parent, name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+		if errors.Is(err, os.ErrExist) {
 			continue
 		}
 		if err != nil {
 			return nil, "", err
 		}
-		return os.NewFile(uintptr(fd), name), name, nil
+		return file, name, nil
 	}
-	return nil, "", unix.EEXIST
+	return nil, "", os.ErrExist
 }
 
 func temporaryName(prefix string) (string, error) {
@@ -503,7 +504,7 @@ func temporaryRecoveryPath(path, temporaryName string) string {
 	if directory == "." {
 		return temporaryName
 	}
-	return filepath.Join(directory, temporaryName)
+	return filepath.ToSlash(filepath.Join(directory, temporaryName))
 }
 
 func cloneEditRequest(request EditRequest) EditRequest {

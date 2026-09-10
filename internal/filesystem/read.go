@@ -24,23 +24,23 @@ type Service struct {
 	access              *access.Manager
 	maxReadBytes        int64
 	trashDir            string
-	beforeRead          func() error                                 // test hook; nil in normal services
-	beforeReplace       func() error                                 // test hook after temp close/context check; nil in normal services
-	beforeSwap          func() error                                 // test hook after final revision check; nil in normal services
-	beforeRollback      func() error                                 // test hook before rollback swap; nil in normal services
-	renameSwap          func(int, string, int, string, uint32) error // test hook; nil uses RenameatxNp
-	beforeReadAt        func(string) error                           // test hook; nil in normal services
-	afterReadAtStat     func(string) error                           // test hook; nil in normal services
-	afterDisplacedRead  func() error                                 // test hook after a displaced inode is verified
-	afterRollbackRead   func(*os.File, string) error                 // test hook after a rollback artifact is verified
-	beforeCreatePublish func() error                                 // test hook after private create temp is durable
-	writeFile           func(*os.File, []byte) error                 // test hook; nil uses writeAll
-	syncFile            func(*os.File) error                         // test hook; nil uses Sync
-	renameAt            func(int, string, int, string) error         // test hook; nil uses descriptor-relative rename
-	beforeTrashValidate func() error                                 // test hook before configured Trash revalidation; nil in normal services
-	beforeTrashRename   func() error                                 // test hook after Trash descriptor pinning; nil in normal services
-	beforeDeleteEntry   func(string) error                           // test hook; nil in normal services
-	readDirectory       func(*os.File, int) ([]os.DirEntry, error)   // test hook; nil uses ReadDir
+	beforeRead          func() error                                   // test hook; nil in normal services
+	beforeReplace       func() error                                   // test hook after temp close/context check; nil in normal services
+	beforeSwap          func() error                                   // test hook after final revision check; nil in normal services
+	beforeRollback      func() error                                   // test hook before rollback swap; nil in normal services
+	renameSwap          func(*os.File, string, string) error           // semantic exchange test hook
+	beforeReadAt        func(string) error                             // test hook; nil in normal services
+	afterReadAtStat     func(string) error                             // test hook; nil in normal services
+	afterDisplacedRead  func() error                                   // test hook after a displaced inode is verified
+	afterRollbackRead   func(*os.File, string) error                   // test hook after a rollback artifact is verified
+	beforeCreatePublish func() error                                   // test hook after private create temp is durable
+	writeFile           func(*os.File, []byte) error                   // test hook; nil uses writeAll
+	syncFile            func(*os.File) error                           // test hook; nil uses Sync
+	renameAt            func(*os.File, string, *os.File, string) error // no-replace rename test hook
+	beforeTrashValidate func() error                                   // test hook before configured Trash revalidation; nil in normal services
+	beforeTrashRename   func() error                                   // test hook after Trash descriptor pinning; nil in normal services
+	beforeDeleteEntry   func(string) error                             // test hook; nil in normal services
+	readDirectory       func(*os.File, int) ([]os.DirEntry, error)     // test hook; nil uses ReadDir
 }
 type TextFile struct {
 	Root, Path, Content, Revision string

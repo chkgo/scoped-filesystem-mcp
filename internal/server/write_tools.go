@@ -31,7 +31,7 @@ func (s toolServer) registerWrites(server *mcp.Server) {
 	editTool.OutputSchema.(*jsonschema.Schema).OneOf = append(editTool.OutputSchema.(*jsonschema.Schema).OneOf, conflictSchema)
 	mcp.AddTool(server, editTool, s.editFile)
 	mcp.AddTool(server, mutationTool[MutationOutput]("move_path", "Rename a path between allowed locations without replacing a destination.", true), s.movePath)
-	mcp.AddTool(server, mutationTool[MutationOutput]("trash_path", "Move a path to macOS Trash.", true), s.trashPath)
+	mcp.AddTool(server, mutationTool[MutationOutput]("trash_path", "Move a path to the system Trash or Recycle Bin when supported.", true), s.trashPath)
 	mcp.AddTool(server, mutationTool[MutationOutput]("permanent_delete_path", "Permanently remove a path only after confirmation and target fingerprint revalidation.", true), s.permanentDeletePath)
 }
 

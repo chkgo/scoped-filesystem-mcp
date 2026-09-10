@@ -3,23 +3,12 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
-)
 
-const validYAML = `version: 1
-directories:
-  - name: notes
-    path: /tmp/notes
-    allow: [list, search, read, create, edit, move, trash]
-    ask: [trash]
-    on_conflict: ask
-  - name: archive
-    path: /var/tmp/archive
-    allow: [list, read]
-    ask: []
-    on_conflict: ask
-`
+	"gopkg.in/yaml.v3"
+)
 
 func writeConfig(t *testing.T, content string) string {
 	t.Helper()
@@ -30,12 +19,30 @@ func writeConfig(t *testing.T, content string) string {
 	return path
 }
 
-func configWith(body string) string {
-	return "version: 1\ndirectories:\n  - name: notes\n    path: /tmp/notes\n    " + body + "\n    on_conflict: ask\n"
+func validConfig(t *testing.T) Config {
+	t.Helper()
+	return Config{Version: 1, Directories: []DirectoryRule{
+		{Name: "notes", Path: filepath.Join(t.TempDir(), "notes"), Allow: []Operation{OpList, OpSearch, OpRead, OpCreate, OpEdit, OpMove, OpTrash}, Ask: []Operation{OpTrash}, OnConflict: "ask"},
+		{Name: "archive", Path: filepath.Join(t.TempDir(), "archive"), Allow: []Operation{OpList, OpRead}, OnConflict: "ask"},
+	}}
+}
+
+func writeConfigValue(t *testing.T, value any) string {
+	t.Helper()
+	content, err := yaml.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshal config fixture: %v", err)
+	}
+	return writeConfig(t, string(content))
+}
+
+func configWith(t *testing.T, body string) string {
+	t.Helper()
+	return "version: 1\ndirectories:\n  - name: notes\n    path: " + strconv.Quote(filepath.Join(t.TempDir(), "notes")) + "\n    " + body + "\n    on_conflict: ask\n"
 }
 
 func TestLoadValidConfig(t *testing.T) {
-	got, err := Load(writeConfig(t, validYAML))
+	got, err := Load(writeConfigValue(t, validConfig(t)))
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
@@ -45,30 +52,36 @@ func TestLoadValidConfig(t *testing.T) {
 }
 
 func TestLoadRejectsUnknownYAMLField(t *testing.T) {
-	_, err := Load(writeConfig(t, configWith("allow: [read]\n    unexpected: true")))
+	_, err := Load(writeConfig(t, configWith(t, "allow: [read]\n    unexpected: true")))
 	if err == nil || !strings.Contains(err.Error(), "unexpected") {
 		t.Fatalf("Load() error = %v", err)
 	}
 }
 
 func TestLoadRejectsVersionOtherThanOne(t *testing.T) {
-	_, err := Load(writeConfig(t, strings.Replace(validYAML, "version: 1", "version: 2", 1)))
+	cfg := validConfig(t)
+	cfg.Version = 2
+	_, err := Load(writeConfigValue(t, cfg))
 	if err == nil || !strings.Contains(err.Error(), "version") {
 		t.Fatalf("Load() error = %v", err)
 	}
 }
 
 func TestLoadRejectsDuplicateOrEmptyNames(t *testing.T) {
+	duplicate := validConfig(t)
+	duplicate.Directories[1].Name = "notes"
+	empty := validConfig(t)
+	empty.Directories[0].Name = ""
 	tests := []struct {
 		name string
-		yaml string
+		cfg  Config
 	}{
-		{"duplicate names", strings.Replace(validYAML, "- name: archive", "- name: notes", 1)},
-		{"empty name", strings.Replace(validYAML, "- name: notes", "- name: ''", 1)},
+		{"duplicate names", duplicate},
+		{"empty name", empty},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := Load(writeConfig(t, tc.yaml))
+			_, err := Load(writeConfigValue(t, tc.cfg))
 			if err == nil || !strings.Contains(err.Error(), "name") {
 				t.Fatalf("Load() error = %v", err)
 			}
@@ -77,42 +90,46 @@ func TestLoadRejectsDuplicateOrEmptyNames(t *testing.T) {
 }
 
 func TestLoadRejectsNonAbsolutePath(t *testing.T) {
-	_, err := Load(writeConfig(t, strings.Replace(validYAML, "/tmp/notes", "notes", 1)))
+	cfg := validConfig(t)
+	cfg.Directories[0].Path = "notes"
+	_, err := Load(writeConfigValue(t, cfg))
 	if err == nil || !strings.Contains(err.Error(), "absolute") {
 		t.Fatalf("Load() error = %v", err)
 	}
 }
 
 func TestLoadRejectsUnknownOperation(t *testing.T) {
-	_, err := Load(writeConfig(t, configWith("allow: [read, rename]")))
+	_, err := Load(writeConfig(t, configWith(t, "allow: [read, rename]")))
 	if err == nil || !strings.Contains(err.Error(), "operation") {
 		t.Fatalf("Load() error = %v", err)
 	}
 }
 
 func TestLoadRejectsAskWithoutAllow(t *testing.T) {
-	_, err := Load(writeConfig(t, configWith("allow: [read]\n    ask: [edit]")))
+	_, err := Load(writeConfig(t, configWith(t, "allow: [read]\n    ask: [edit]")))
 	if err == nil || !strings.Contains(err.Error(), "ask operation edit is not allowed") {
 		t.Fatalf("Load() error = %v", err)
 	}
 }
 
 func TestLoadRejectsDuplicateOperations(t *testing.T) {
-	_, err := Load(writeConfig(t, configWith("allow: [read, read]")))
+	_, err := Load(writeConfig(t, configWith(t, "allow: [read, read]")))
 	if err == nil || !strings.Contains(err.Error(), "duplicate") {
 		t.Fatalf("Load() error = %v", err)
 	}
 }
 
 func TestLoadRejectsInvalidConflictPolicy(t *testing.T) {
-	_, err := Load(writeConfig(t, strings.Replace(validYAML, "on_conflict: ask", "on_conflict: overwrite", 1)))
+	cfg := validConfig(t)
+	cfg.Directories[0].OnConflict = "overwrite"
+	_, err := Load(writeConfigValue(t, cfg))
 	if err == nil || !strings.Contains(err.Error(), "on_conflict") {
 		t.Fatalf("Load() error = %v", err)
 	}
 }
 
 func TestLoadRequiresReadWhenEditAllowed(t *testing.T) {
-	_, err := Load(writeConfig(t, configWith("allow: [edit]")))
+	_, err := Load(writeConfig(t, configWith(t, "allow: [edit]")))
 	if err == nil || !strings.Contains(err.Error(), "read") {
 		t.Fatalf("Load() error = %v", err)
 	}

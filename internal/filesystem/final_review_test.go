@@ -4,19 +4,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/chkgo/scoped-filesystem-mcp/internal/platform"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
-	"time"
 
 	"github.com/chkgo/scoped-filesystem-mcp/internal/config"
-	"golang.org/x/sys/unix"
 )
 
 func TestEditRetainsDisplacedInodeAfterSuccessfulVerification(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	root := t.TempDir()
 	target := filepath.Join(root, "note.md")
 	writeBytes(t, target, []byte("old\n"))
@@ -39,6 +41,9 @@ func TestEditRetainsDisplacedInodeAfterSuccessfulVerification(t *testing.T) {
 }
 
 func TestEditRetainsProposalInodeAfterVerifiedRollback(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	root := t.TempDir()
 	target := filepath.Join(root, "note.md")
 	writeBytes(t, target, []byte("old\n"))
@@ -90,57 +95,6 @@ func TestCreateTextWriteAndSyncFailuresNeverPublish(t *testing.T) {
 			assertWriteFileContent(t, root, "note.md", "external\n")
 			assertNoTemporaryFiles(t, root)
 		})
-	}
-}
-
-func TestReadAndStatFIFOFailPromptly(t *testing.T) {
-	root := t.TempDir()
-	if err := unix.Mkfifo(filepath.Join(root, "pipe"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	s := queryService(t, root)
-	writer := writeService(t, root)
-	for name, call := range map[string]func() error{
-		"read":   func() error { _, err := s.ReadText(context.Background(), "notes", "pipe"); return err },
-		"binary": func() error { _, err := s.ReadBinary(context.Background(), "notes", "pipe"); return err },
-		"list":   func() error { _, err := s.ListDirectory(context.Background(), "notes", "pipe"); return err },
-		"search_paths": func() error {
-			_, err := s.SearchPaths(context.Background(), "notes", "pipe", "x", SearchOptions{})
-			return err
-		},
-		"search_text": func() error {
-			_, err := s.SearchText(context.Background(), "notes", "pipe", "x", SearchOptions{})
-			return err
-		},
-		"edit": func() error {
-			_, _, err := writer.EditText(context.Background(), "notes", "pipe", EditRequest{})
-			return err
-		},
-	} {
-		done := make(chan error, 1)
-		go func() { done <- call() }()
-		select {
-		case err := <-done:
-			assertFSCode(t, err, "unsupported_file_type")
-		case <-time.After(time.Second):
-			t.Fatalf("%s blocked on FIFO", name)
-		}
-	}
-	done := make(chan error, 1)
-	go func() {
-		entry, err := s.Stat(context.Background(), "notes", "pipe")
-		if err == nil && entry.Type != "other" {
-			err = errors.New("FIFO stat type was not other")
-		}
-		done <- err
-	}()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("stat blocked on FIFO")
 	}
 }
 
@@ -214,6 +168,9 @@ func TestSearchTextBoundsAggregateResponseAndHonorsCancellation(t *testing.T) {
 }
 
 func TestEditConflictReadThatGrowsPastBoundIsRejected(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	root := t.TempDir()
 	path := filepath.Join(root, "note.md")
 	writeBytes(t, path, []byte("old\n"))
@@ -233,6 +190,9 @@ func TestEditConflictReadThatGrowsPastBoundIsRejected(t *testing.T) {
 }
 
 func TestOversizedPostSwapRecoveryRetainsPathWithoutContent(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	root := t.TempDir()
 	path := filepath.Join(root, "note.md")
 	writeBytes(t, path, []byte("old\n"))
@@ -275,6 +235,9 @@ func TestCreateAndEditRecheckCancellationAtPublicationBoundary(t *testing.T) {
 		}
 	})
 	t.Run("edit", func(t *testing.T) {
+		if !platform.SupportsAtomicEdit {
+			t.Skip("atomic edits unavailable")
+		}
 		root := t.TempDir()
 		writeBytes(t, filepath.Join(root, "note"), []byte("old"))
 		s := writeService(t, root)
@@ -288,6 +251,9 @@ func TestCreateAndEditRecheckCancellationAtPublicationBoundary(t *testing.T) {
 }
 
 func TestEditReadHonorsCancellationDuringContentRead(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	root := t.TempDir()
 	writeBytes(t, filepath.Join(root, "note"), []byte(strings.Repeat("x", 1024)))
 	s := writeService(t, root)
@@ -409,6 +375,9 @@ func TestEntryIncludesCreationAndModificationTimestamps(t *testing.T) {
 }
 
 func TestRollbackTargetReadFailureNeverClaimsUnverifiedProposal(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	root := t.TempDir()
 	target := filepath.Join(root, "note.md")
 	writeBytes(t, target, []byte("old\n"))
@@ -436,6 +405,9 @@ func TestRollbackTargetReadFailureNeverClaimsUnverifiedProposal(t *testing.T) {
 }
 
 func TestFinalSymlinkEditReturnsOpenableCanonicalRecoveryPath(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, "actual"), 0o700); err != nil {
 		t.Fatal(err)

@@ -70,9 +70,10 @@ type ListRootsOutput struct {
 }
 
 type RootOutput struct {
-	Name  string   `json:"name" jsonschema:"configured root name for tool calls"`
-	Path  string   `json:"path" jsonschema:"configured user-facing root path"`
-	Allow []string `json:"allow" jsonschema:"operations allowed within this root"`
+	Unsupported []string `json:"unsupported,omitempty" jsonschema:"allowed operations unavailable in this build; runtime filesystem limits can also apply"`
+	Name        string   `json:"name" jsonschema:"configured root name for tool calls"`
+	Path        string   `json:"path" jsonschema:"configured user-facing root path"`
+	Allow       []string `json:"allow" jsonschema:"operations allowed within this root"`
 }
 
 type ListDirectoryOutput struct {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"github.com/chkgo/scoped-filesystem-mcp/internal/platform"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,6 +50,9 @@ func TestAskAllMutationsAcceptOrDecline(t *testing.T) {
 	} {
 		for _, action := range []string{"proceed", "decline"} {
 			t.Run(tc.name+"/"+action, func(t *testing.T) {
+				if tc.op == config.OpEdit && !platform.SupportsAtomicEdit {
+					t.Skip("atomic edits unavailable")
+				}
 				allow := []config.Operation{tc.op}
 				if tc.op == config.OpEdit {
 					allow = []config.Operation{config.OpRead, config.OpEdit}
@@ -176,6 +180,9 @@ func TestAskMoveDestinationAndDeniedDestination(t *testing.T) {
 }
 
 func TestMutationEditRequiresExpectedOccurrences(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	manager := testManager(t, []config.Operation{config.OpRead, config.OpEdit}, nil)
 	root := manager.Roots()[0].Path
 	writeTestFile(t, filepath.Join(root, "note"), []byte("old"))
@@ -244,6 +251,9 @@ func TestPermanentSymlinkChangeRequiresApprovalAndUnlinksOnlyLink(t *testing.T) 
 }
 
 func TestConflictAutomaticReloadUsesLatestContentAndPreservesProposal(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	manager := testManager(t, []config.Operation{config.OpRead, config.OpEdit}, nil)
 	root := manager.Roots()[0].Path
 	path := filepath.Join(root, "note")
@@ -512,6 +522,9 @@ func TestPermanentChangedFingerprintRequiresFreshApproval(t *testing.T) {
 }
 
 func TestConflictChoicesAndRepeatedExternalEdit(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	for _, choice := range []string{"reload_and_rebase", "overwrite", "cancel"} {
 		t.Run(choice, func(t *testing.T) {
 			manager := testManager(t, []config.Operation{config.OpRead, config.OpEdit}, nil)

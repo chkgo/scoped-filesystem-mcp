@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"golang.org/x/sys/unix"
+	"github.com/chkgo/scoped-filesystem-mcp/internal/platform"
 
 	"github.com/chkgo/scoped-filesystem-mcp/internal/config"
 )
@@ -46,7 +46,7 @@ type root struct {
 	rule       config.DirectoryRule
 	configured string
 	canonical  string
-	identity   os.FileInfo
+	identity   platform.Identity
 	file       *os.File
 }
 
@@ -79,12 +79,11 @@ func New(rules []config.DirectoryRule) (*Manager, error) {
 			m.Close()
 			return nil, fmt.Errorf("invalid configuration: resolve root %q: %w", rule.Name, err)
 		}
-		fd, err := unix.Open(canonical, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+		file, err := platform.OpenRoot(canonical)
 		if err != nil {
 			m.Close()
 			return nil, fmt.Errorf("invalid configuration: open root %q: %w", rule.Name, err)
 		}
-		file := os.NewFile(uintptr(fd), canonical)
 		info, err := file.Stat()
 		if err != nil {
 			file.Close()
@@ -97,9 +96,15 @@ func New(rules []config.DirectoryRule) (*Manager, error) {
 			return nil, fmt.Errorf("invalid configuration: root %q is not a directory", rule.Name)
 		}
 
+		metadata, err := platform.MetadataForFile(file)
+		if err != nil {
+			file.Close()
+			m.Close()
+			return nil, fmt.Errorf("invalid configuration: identify root %q: %w", rule.Name, err)
+		}
 		rule.Allow = append([]config.Operation(nil), rule.Allow...)
 		rule.Ask = append([]config.Operation(nil), rule.Ask...)
-		m.roots[rule.Name] = &root{rule: rule, configured: configured, canonical: canonical, identity: info, file: file}
+		m.roots[rule.Name] = &root{rule: rule, configured: configured, canonical: canonical, identity: metadata.Identity, file: file}
 		m.order = append(m.order, rule.Name)
 	}
 	return m, nil

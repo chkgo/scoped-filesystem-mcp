@@ -1,0 +1,17 @@
+# Copy this file to %AppData%\scoped-filesystem-mcp\config.yaml and review it
+# before use. The server never creates or overwrites this policy for you.
+version: 1
+
+directories:
+  - name: documents
+    path: 'C:\Users\you\Documents'
+    allow:
+      - list
+      - search
+      - read
+      - create
+      - move
+      - permanent_delete
+    ask:
+      - permanent_delete
+    on_conflict: ask

@@ -9,11 +9,10 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 	"unicode/utf8"
 
-	"golang.org/x/sys/unix"
+	"github.com/chkgo/scoped-filesystem-mcp/internal/platform"
 
 	"github.com/chkgo/scoped-filesystem-mcp/internal/access"
 	"github.com/chkgo/scoped-filesystem-mcp/internal/config"
@@ -60,9 +59,9 @@ func (s *Service) ListDirectory(ctx context.Context, root, path string) ([]Entry
 	if err != nil {
 		return nil, MapError(root, path, config.OpList, err)
 	}
-	directory, err := p.Open(os.O_RDONLY|unix.O_DIRECTORY, 0)
+	directory, err := p.OpenDirectory()
 	if err != nil {
-		if errors.Is(err, unix.ENOTDIR) {
+		if errors.Is(err, platform.ErrNotDirectory) {
 			return nil, newError(root, path, config.OpList, "unsupported_file_type", err)
 		}
 		return nil, MapError(root, path, config.OpList, err)
@@ -124,8 +123,8 @@ func (s *Service) Stat(ctx context.Context, root, path string) (Entry, error) {
 func (s *Service) directoryEntry(ctx context.Context, root, path string, directory *os.File, item os.DirEntry) (Entry, error) {
 	// The parent is already authorized and pinned. Inspect the entry itself so
 	// dangling or out-of-root symlinks can be listed without following targets.
-	var stat unix.Stat_t
-	if err := unix.Fstatat(int(directory.Fd()), item.Name(), &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+	stat, err := platform.LstatAt(directory, item.Name())
+	if err != nil {
 		return Entry{}, MapError(root, path, config.OpList, err)
 	}
 	entry := entryFromStat(root, path, stat)
@@ -151,8 +150,8 @@ func (s *Service) directoryEntry(ctx context.Context, root, path string, directo
 
 func (s *Service) entryFromOpenFile(ctx context.Context, root, path string, file *os.File, info os.FileInfo, operation config.Operation) (Entry, error) {
 	entry := Entry{Root: root, Path: path, Type: entryType(info.Mode()), Size: info.Size(), ModifiedAt: info.ModTime().UTC().Format(time.RFC3339Nano)}
-	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
-		entry.CreatedAt = timespecString(stat.Birthtimespec.Sec, stat.Birthtimespec.Nsec)
+	if stat, err := platform.MetadataForFile(file); err == nil && stat.CreatedAt != nil {
+		entry.CreatedAt = stat.CreatedAt.UTC().Format(time.RFC3339Nano)
 	}
 	if !info.Mode().IsRegular() {
 		return entry, nil
@@ -166,25 +165,12 @@ func (s *Service) entryFromOpenFile(ctx context.Context, root, path string, file
 	return entry, nil
 }
 
-func entryFromStat(root, path string, stat unix.Stat_t) Entry {
-	return Entry{Root: root, Path: path, Type: statEntryType(stat.Mode), Size: stat.Size, CreatedAt: timespecString(stat.Btim.Sec, stat.Btim.Nsec), ModifiedAt: timespecString(stat.Mtim.Sec, stat.Mtim.Nsec)}
-}
-
-func timespecString(sec, nsec int64) string {
-	return time.Unix(sec, nsec).UTC().Format(time.RFC3339Nano)
-}
-
-func statEntryType(mode uint16) string {
-	switch mode & unix.S_IFMT {
-	case unix.S_IFDIR:
-		return "directory"
-	case unix.S_IFREG:
-		return "file"
-	case unix.S_IFLNK:
-		return "symlink"
-	default:
-		return "other"
+func entryFromStat(root, path string, stat platform.Metadata) Entry {
+	entry := Entry{Root: root, Path: path, Type: entryType(stat.Mode), Size: stat.Size, ModifiedAt: stat.ModifiedAt.UTC().Format(time.RFC3339Nano)}
+	if stat.CreatedAt != nil {
+		entry.CreatedAt = stat.CreatedAt.UTC().Format(time.RFC3339Nano)
 	}
+	return entry
 }
 
 func entryType(mode os.FileMode) string {
@@ -205,7 +191,7 @@ func (s *Service) SearchPaths(ctx context.Context, root, path, query string, opt
 	limit := resultLimit(options.MaxResults)
 	results := make([]PathMatch, 0, limit)
 
-	err := s.walk(ctx, root, path, func(relative string, _ uint16) error {
+	err := s.walk(ctx, root, path, func(relative string, _ os.FileMode) error {
 		if strings.Contains(normalizedQuery(relative, options.CaseSensitive), needle) {
 			results = keepPathMatch(results, PathMatch{Root: root, Path: relative}, limit)
 		}
@@ -222,8 +208,8 @@ func (s *Service) SearchText(ctx context.Context, root, path, query string, opti
 	limit := resultLimit(options.MaxResults)
 	results := newTextMatchCollector(limit, s.maxReadBytes)
 
-	err := s.walk(ctx, root, path, func(relative string, mode uint16) error {
-		if statEntryType(mode) == "symlink" {
+	err := s.walk(ctx, root, path, func(relative string, mode os.FileMode) error {
+		if entryType(mode) == "symlink" {
 			return nil
 		}
 
@@ -291,7 +277,7 @@ func (s *Service) SearchText(ctx context.Context, root, path, query string, opti
 	return results.matches, nil
 }
 
-func (s *Service) walk(ctx context.Context, root, path string, visit func(string, uint16) error) error {
+func (s *Service) walk(ctx context.Context, root, path string, visit func(string, os.FileMode) error) error {
 	if err := ctx.Err(); err != nil {
 		return newError(root, path, config.OpSearch, "filesystem_unavailable", err)
 	}
@@ -299,9 +285,9 @@ func (s *Service) walk(ctx context.Context, root, path string, visit func(string
 	if err != nil {
 		return MapError(root, path, config.OpSearch, err)
 	}
-	directory, err := p.Open(os.O_RDONLY|unix.O_DIRECTORY, 0)
+	directory, err := p.OpenDirectory()
 	if err != nil {
-		if errors.Is(err, unix.ENOTDIR) {
+		if errors.Is(err, platform.ErrNotDirectory) {
 			return newError(root, path, config.OpSearch, "unsupported_file_type", err)
 		}
 		return MapError(root, path, config.OpSearch, err)
@@ -318,7 +304,7 @@ func (s *Service) walk(ctx context.Context, root, path string, visit func(string
 	return s.walkDirectory(ctx, root, path, directory, visit)
 }
 
-func (s *Service) walkDirectory(ctx context.Context, root, path string, directory *os.File, visit func(string, uint16) error) error {
+func (s *Service) walkDirectory(ctx context.Context, root, path string, directory *os.File, visit func(string, os.FileMode) error) error {
 	for {
 		if err := ctx.Err(); err != nil {
 			return newError(root, path, config.OpSearch, "filesystem_unavailable", err)
@@ -346,7 +332,7 @@ func (s *Service) walkDirectory(ctx context.Context, root, path string, director
 			if err := visit(relative, mode); err != nil {
 				return err
 			}
-			if statEntryType(mode) != "directory" {
+			if entryType(mode) != "directory" {
 				continue
 			}
 			child, err := openDirectoryAt(directory, item.Name())
@@ -368,20 +354,12 @@ func (s *Service) walkDirectory(ctx context.Context, root, path string, director
 	}
 }
 
-func directoryEntryMode(directory *os.File, name string) (uint16, error) {
-	var stat unix.Stat_t
-	if err := unix.Fstatat(int(directory.Fd()), name, &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
-		return 0, err
-	}
-	return stat.Mode, nil
+func directoryEntryMode(directory *os.File, name string) (os.FileMode, error) {
+	stat, err := platform.LstatAt(directory, name)
+	return stat.Mode, err
 }
-
 func openDirectoryAt(parent *os.File, name string) (*os.File, error) {
-	fd, err := unix.Openat(int(parent.Fd()), name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
-	if err != nil {
-		return nil, err
-	}
-	return os.NewFile(uintptr(fd), name), nil
+	return platform.OpenDirectoryAt(parent, name)
 }
 
 func sortDirEntries(entries []os.DirEntry) {
@@ -392,7 +370,7 @@ func joinRelative(parent, name string) string {
 	if parent == "." {
 		return name
 	}
-	return filepath.Join(parent, name)
+	return filepath.ToSlash(filepath.Join(parent, name))
 }
 
 func normalizedQuery(value string, caseSensitive bool) string {

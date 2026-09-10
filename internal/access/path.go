@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"golang.org/x/sys/unix"
+	"github.com/chkgo/scoped-filesystem-mcp/internal/platform"
 
 	"github.com/chkgo/scoped-filesystem-mcp/internal/config"
 )
@@ -82,8 +82,13 @@ func (r *root) verifyTarget() error {
 	if err != nil {
 		return accessError("root_target_changed", err)
 	}
-	info, err := os.Stat(current)
-	if err != nil || !os.SameFile(r.identity, info) {
+	file, err := platform.OpenRoot(current)
+	if err != nil {
+		return accessError("root_target_changed", err)
+	}
+	defer file.Close()
+	metadata, err := platform.MetadataForFile(file)
+	if err != nil || r.identity != metadata.Identity {
 		return accessError("root_target_changed", err)
 	}
 	return nil
@@ -92,6 +97,15 @@ func (r *root) verifyTarget() error {
 // Open opens an existing path, or creates its final component when its parent
 // exists, using descriptor-relative no-follow operations below the pinned root.
 func (p Path) Open(flags int, perm fs.FileMode) (*os.File, error) {
+	return p.open(flags, perm, false)
+}
+
+// OpenDirectory rejects non-directory entries in the native open itself.
+func (p Path) OpenDirectory() (*os.File, error) {
+	return p.open(os.O_RDONLY, 0, true)
+}
+
+func (p Path) open(flags int, perm fs.FileMode, directory bool) (*os.File, error) {
 	parent, remaining, err := p.OpenParent()
 	if err != nil {
 		return nil, err
@@ -105,17 +119,22 @@ func (p Path) Open(flags int, perm fs.FileMode) (*os.File, error) {
 	}
 	// O_NONBLOCK prevents an attacker-controlled FIFO or device from hanging the
 	// server before callers can validate the descriptor type with fstat.
-	fd, err := unix.Openat(int(parent.Fd()), remaining[0], flags|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, uint32(perm.Perm()))
+	var file *os.File
+	if directory {
+		file, err = platform.OpenDirectoryAt(parent, remaining[0])
+	} else {
+		file, err = platform.OpenFileAt(parent, remaining[0], flags, perm)
+	}
 	if err != nil {
 		return nil, openAccessError(err)
 	}
-	return os.NewFile(uintptr(fd), p.Display), nil
+	return file, nil
 }
 
 // CanonicalRelative is the authorized root-relative path after resolving
 // in-root symlinks. It is safe to use when reporting descriptor-relative
 // recovery artifacts created beside the resolved target.
-func (p Path) CanonicalRelative() string { return p.secureRelative }
+func (p Path) CanonicalRelative() string { return filepath.ToSlash(p.secureRelative) }
 
 // OpenParent returns the nearest existing parent directory pinned below the
 // configured root and the remaining clean path components below that directory.
@@ -142,26 +161,24 @@ func (p Path) openParent(relative string) (*os.File, []string, error) {
 	// Opening "." below the pinned root creates a distinct open-file
 	// description. unix.Dup would share the directory read offset, causing one
 	// listing or search to make a later root-level listing appear empty.
-	fd, err := unix.Openat(int(p.root.file.Fd()), ".", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	current, err := platform.OpenDirectoryAt(p.root.file, ".")
 	if err != nil {
 		return nil, nil, openAccessError(err)
 	}
-	current := os.NewFile(uintptr(fd), p.root.canonical)
 	if relative == "." {
 		return current, nil, nil
 	}
 
-	parts := strings.Split(relative, string(os.PathSeparator))
+	parts := strings.Split(filepath.FromSlash(relative), string(os.PathSeparator))
 	for i, part := range parts[:len(parts)-1] {
-		nextFD, err := unix.Openat(int(current.Fd()), part, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+		next, err := platform.OpenDirectoryAt(current, part)
 		if err != nil {
-			if os.IsNotExist(err) {
+			if errors.Is(err, os.ErrNotExist) {
 				return current, append([]string(nil), parts[i:]...), nil
 			}
 			current.Close()
 			return nil, nil, openAccessError(err)
 		}
-		next := os.NewFile(uintptr(nextFD), part)
 		current.Close()
 		current = next
 	}
@@ -169,26 +186,16 @@ func (p Path) openParent(relative string) (*os.File, []string, error) {
 }
 
 func openAccessError(err error) error {
-	if errors.Is(err, unix.ELOOP) {
+	if errors.Is(err, platform.ErrSymlink) {
 		return accessError("symlink_escape", err)
 	}
-	if os.IsNotExist(err) {
+	if errors.Is(err, os.ErrNotExist) {
 		return accessError("path_not_found", err)
 	}
 	return accessError("filesystem_unavailable", err)
 }
 
-func cleanRelative(relative string) (string, error) {
-	if filepath.IsAbs(relative) {
-		return "", fs.ErrPermission
-	}
-	for _, part := range strings.Split(relative, string(os.PathSeparator)) {
-		if part == ".." {
-			return "", fs.ErrPermission
-		}
-	}
-	return filepath.Clean(relative), nil
-}
+func cleanRelative(relative string) (string, error) { return platform.CleanRelative(relative) }
 
 // resolveComponents follows each existing symlink. Once it encounters a
 // missing component, the remaining clean components are appended unchanged.
@@ -198,12 +205,12 @@ func resolveComponents(rootPath, relative string) (string, bool, error) {
 	}
 
 	current := rootPath
-	parts := strings.Split(relative, string(os.PathSeparator))
+	parts := strings.Split(filepath.FromSlash(relative), string(os.PathSeparator))
 	for i, part := range parts {
 		next := filepath.Join(current, part)
 		_, err := os.Lstat(next)
 		if err != nil {
-			if os.IsNotExist(err) {
+			if errors.Is(err, os.ErrNotExist) {
 				return filepath.Join(append([]string{current}, parts[i:]...)...), false, nil
 			}
 			return "", false, accessError("filesystem_unavailable", err)

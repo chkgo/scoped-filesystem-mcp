@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/chkgo/scoped-filesystem-mcp/internal/platform"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -19,6 +20,9 @@ import (
 )
 
 func TestEditRequiresReadAndEditWithLoaderValidRules(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	for _, ask := range [][]config.Operation{{config.OpRead}, {config.OpEdit}} {
 		manager := loaderValidEditManager(t, ask)
 		root := manager.Roots()[0].Path
@@ -37,6 +41,9 @@ func TestEditRequiresReadAndEditWithLoaderValidRules(t *testing.T) {
 }
 
 func TestConflictUnavailablePreservesContextAndProposal(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	manager := loaderValidEditManager(t, nil)
 	root := manager.Roots()[0].Path
 	writeTestFile(t, filepath.Join(root, "note"), []byte("current"))
@@ -88,6 +95,9 @@ func TestRecoveryOutputKeepsFilesystemContext(t *testing.T) {
 }
 
 func TestSuccessfulEditReturnsRecoveryPathReadableThroughMCP(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	manager := loaderValidEditManager(t, nil)
 	root := manager.Roots()[0].Path
 	writeTestFile(t, filepath.Join(root, "note"), []byte("old"))
@@ -171,6 +181,9 @@ func TestOversizedPendingEditFailsBeforeFilesystemAccess(t *testing.T) {
 }
 
 func TestOversizedChangedContinuationPreservesRecoveryAndCorrectRetry(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	session, store, root := conflictContinuationSession(t)
 	args := conflictArgs("current")
 	token := seedConflict(t, store, args, "current", ".saved-proposal")
@@ -190,6 +203,9 @@ func TestOversizedChangedContinuationPreservesRecoveryAndCorrectRetry(t *testing
 }
 
 func TestReloadAndRebaseRejectsCombinedGrowthWithoutTruncatingProposalOrRecoveryPaths(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	session, store, root := conflictContinuationSession(t)
 	proposal := strings.Repeat("p", 6<<20)
 	args := map[string]any{"root": "vault", "path": "note", "expected_revision": "stale", "proposed_content": proposal}
@@ -247,6 +263,9 @@ func TestBoundedToolErrorFinalFallbackAlwaysFitsAndDisclosesOmittedLedger(t *tes
 }
 
 func TestOverwriteReservesRecoveryLedgerBeforeMutation(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	session, store, root := conflictContinuationSession(t)
 	args := conflictArgs("current")
 	// This ledger still fits a minimal error, but not after reserving the
@@ -272,6 +291,9 @@ func TestRecoveryLedgerReservationAccountsForWorstCaseJSONEscaping(t *testing.T)
 }
 
 func TestRollbackRecoveryPathsSurviveConflictContinuations(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	for _, action := range []string{"cancel", "decline"} {
 		t.Run(action, func(t *testing.T) {
 			session, store, root := conflictContinuationSession(t)
@@ -370,6 +392,9 @@ func TestRollbackRecoveryPathsSurviveConflictContinuations(t *testing.T) {
 }
 
 func TestMismatchedConflictContinuationsPreserveRecoveryAndCorrectRetry(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	t.Run("changed arguments", func(t *testing.T) {
 		session, store, _ := conflictContinuationSession(t)
 		args := conflictArgs("current")
@@ -431,6 +456,9 @@ func TestMismatchedConflictContinuationsPreserveRecoveryAndCorrectRetry(t *testi
 }
 
 func TestRollbackRecoveryPathIsDisclosedBeforeAndWithoutConflictElicitation(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	for _, tc := range []struct {
 		name       string
 		options    *mcp.ClientOptions

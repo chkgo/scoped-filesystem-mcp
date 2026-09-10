@@ -1,0 +1,114 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: Native ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Configure temporary paths
+        shell: bash
+        run: |
+          echo "GOCACHE=$RUNNER_TEMP/scopedfs-portability-gocache" >> "$GITHUB_ENV"
+          suffix=""
+          if [ "$RUNNER_OS" = Windows ]; then
+            suffix=".exe"
+          fi
+          echo "SCOPEDFS_TEST_BINARY=$RUNNER_TEMP/scoped-filesystem-mcp-test$suffix" >> "$GITHUB_ENV"
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 1.26.x
+          cache: true
+      - name: Enable the Windows race detector toolchain
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          "C:\msys64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+      - name: Verify Windows C compiler
+        if: runner.os == 'Windows'
+        run: gcc --version
+      - name: Build subprocess test executable
+        run: go build -o "${{ env.SCOPEDFS_TEST_BINARY }}" ./cmd/scoped-filesystem-mcp
+      - name: Test
+        run: go test -count=1 ./...
+      - name: Race test
+        run: go test -count=1 -race ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Validate Unix launcher syntax
+        if: runner.os != 'Windows'
+        run: sh -n scripts/launch-scoped-filesystem-mcp
+
+  packages:
+    name: Cross-build package ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+    steps:
+      - uses: actions/checkout@v7
+      - name: Configure temporary paths
+        run: echo "GOCACHE=$RUNNER_TEMP/scopedfs-portability-gocache" >> "$GITHUB_ENV"
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 1.26.x
+          cache: true
+      - name: Cross-build and package
+        run: >-
+          go run ./scripts/package
+          -output dist
+          -goos ${{ matrix.goos }}
+          -goarch ${{ matrix.goarch }}
+      - name: Record acceptance scope
+        run: |
+          echo "### ${{ matrix.goos }}/${{ matrix.goarch }} package" >> "$GITHUB_STEP_SUMMARY"
+          echo "This job proves cross-compilation and archive layout only; native behavior is covered only by the matching native runner above." >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ matrix.goos }}" = windows ]; then
+            echo "Windows edit and system Recycle Bin operations remain unavailable and fail closed until native parity is proven." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: scoped-filesystem-mcp-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
+          if-no-files-found: error
+
+  repository-checks:
+    name: Repository checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 1.26.x
+          cache: true
+      - name: Validate GitHub Actions workflows
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      - name: Validate JSON metadata
+        run: jq -e . .codex-plugin/plugin.json .mcp.json
+      - name: Check whitespace errors
+        run: git diff --check

@@ -8,6 +8,7 @@ import (
 
 	"github.com/chkgo/scoped-filesystem-mcp/internal/access"
 	"github.com/chkgo/scoped-filesystem-mcp/internal/config"
+	"github.com/chkgo/scoped-filesystem-mcp/internal/platform"
 )
 
 // Error is a stable, user-facing filesystem failure. Its message never includes
@@ -52,8 +53,20 @@ func MapError(root, path string, operation config.Operation, err error) error {
 	if errors.Is(err, syscall.ESTALE) || errors.Is(err, syscall.EIO) || errors.Is(err, syscall.ENXIO) {
 		code = "filesystem_unavailable"
 	}
-	if os.IsNotExist(err) {
+	if errors.Is(err, os.ErrNotExist) {
 		code = "path_not_found"
+	}
+	if errors.Is(err, platform.ErrCrossDevice) || errors.Is(err, syscall.EXDEV) {
+		code = "cross_filesystem_move_unsupported"
+	}
+	if errors.Is(err, platform.ErrAtomicRenameUnsupported) {
+		code = "atomic_rename_unsupported"
+	}
+	if errors.Is(err, platform.ErrAtomicReplaceUnsupported) {
+		code = "atomic_replace_unsupported"
+	}
+	if errors.Is(err, platform.ErrTrashUnsupported) {
+		code = "trash_unsupported"
 	}
 	return &Error{Code: code, Root: root, Path: path, Operation: operation, err: err}
 }

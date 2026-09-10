@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/chkgo/scoped-filesystem-mcp/internal/platform"
 	"image"
 	"image/png"
 	"os"
@@ -26,6 +27,9 @@ import (
 // path authorization across the real SDK boundary. All disk operations are
 // real; only the Trash destination is redirected to an isolated test directory.
 func TestEndToEndScenario(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	vault, archive, trash := t.TempDir(), t.TempDir(), t.TempDir()
 	archiveLink := filepath.Join(t.TempDir(), "archive-link")
 	if err := os.Symlink(archive, archiveLink); err != nil {
