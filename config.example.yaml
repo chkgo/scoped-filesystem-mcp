@@ -1,0 +1,18 @@
+# The real configuration belongs outside this repository so upgrades cannot overwrite user choices.
+version: 1
+
+directories:
+  - name: obsidian
+    path: /absolute/path/to/your/ObsidianVault
+    allow:
+      - list
+      - search
+      - read
+      - create
+      - edit
+      - move
+      - trash
+      - permanent_delete
+    ask:
+      - permanent_delete
+    on_conflict: ask

@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+
+plugin_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+config_path=${SCOPED_FILESYSTEM_MCP_CONFIG:-"$HOME/.config/scoped-filesystem-mcp/config.yaml"}
+
+if [ ! -x "$plugin_dir/bin/scoped-filesystem-mcp" ]; then
+  echo "scoped-filesystem-mcp is not built; run: go build -o bin/scoped-filesystem-mcp ./cmd/scoped-filesystem-mcp" >&2
+  exit 1
+fi
+
+exec "$plugin_dir/bin/scoped-filesystem-mcp" --config "$config_path"

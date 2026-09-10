@@ -1,0 +1,29 @@
+{
+  "name": "scoped-filesystem-mcp",
+  "version": "0.1.0+codex.20260910121403",
+  "description": "A locally scoped filesystem MCP server for explicitly configured directories.",
+  "author": {
+    "name": "chkgo"
+  },
+  "license": "MIT",
+  "keywords": [
+    "filesystem",
+    "mcp",
+    "local"
+  ],
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Scoped Filesystem",
+    "shortDescription": "Work only within configured filesystem roots",
+    "longDescription": "Read and modify only the filesystem roots explicitly configured by the user.",
+    "developerName": "chkgo",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Work with files in my configured filesystem roots."
+    ]
+  }
+}
