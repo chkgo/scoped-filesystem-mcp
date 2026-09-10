@@ -97,7 +97,7 @@ func TestSearchPathsSortsRootRelativeResults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got[0].Path != "a.txt" || got[1].Path != filepath.Join("a", "a.txt") {
+	if len(got) != 2 || got[0].Path != "a.txt" || got[1].Path != "a/a.txt" {
 		t.Fatalf("SearchPaths() = %#v, want root-relative sorted paths", got)
 	}
 }
@@ -148,7 +148,7 @@ func TestSearchTextFindsMatchesInNestedDirectories(t *testing.T) {
 	writeBytes(t, filepath.Join(root, "notes", "nested.txt"), []byte("first needle\nsecond\n"))
 
 	got, err := queryService(t, root).SearchText(context.Background(), "notes", ".", "needle", SearchOptions{MaxResults: 10})
-	if err != nil || len(got) != 1 || got[0].Path != filepath.Join("notes", "nested.txt") || got[0].Line != 1 || got[0].Text != "first needle" {
+	if err != nil || len(got) != 1 || got[0].Path != "notes/nested.txt" || got[0].Line != 1 || got[0].Text != "first needle" {
 		t.Fatalf("nested matches = %#v, %v", got, err)
 	}
 }

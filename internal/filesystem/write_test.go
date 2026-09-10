@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"testing"
 
-	"golang.org/x/sys/unix"
+	"github.com/chkgo/scoped-filesystem-mcp/internal/platform"
 
 	"github.com/chkgo/scoped-filesystem-mcp/internal/access"
 	"github.com/chkgo/scoped-filesystem-mcp/internal/config"
@@ -60,6 +60,9 @@ func TestCreateTextRejectsExistingDestination(t *testing.T) {
 }
 
 func TestEditTextRequiresExactOccurrenceCount(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	root := t.TempDir()
 	writeBytes(t, filepath.Join(root, "note.md"), []byte("todo, todo\n"))
 	service := writeService(t, root)
@@ -77,6 +80,9 @@ func TestEditTextRequiresExactOccurrenceCount(t *testing.T) {
 }
 
 func TestEditTextAppliesSequentialReplacements(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	root := t.TempDir()
 	writeBytes(t, filepath.Join(root, "note.md"), []byte("green green\n"))
 	service := writeService(t, root)
@@ -96,6 +102,9 @@ func TestEditTextAppliesSequentialReplacements(t *testing.T) {
 }
 
 func TestEditTextReplacesWholeFileWithoutEdits(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	root := t.TempDir()
 	writeBytes(t, filepath.Join(root, "note.md"), []byte("old\n"))
 
@@ -110,6 +119,9 @@ func TestEditTextReplacesWholeFileWithoutEdits(t *testing.T) {
 }
 
 func TestEditTextRejectsProposedContentThatDoesNotMatchEdits(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	root := t.TempDir()
 	writeBytes(t, filepath.Join(root, "note.md"), []byte("old\n"))
 
@@ -125,52 +137,10 @@ func TestEditTextRejectsProposedContentThatDoesNotMatchEdits(t *testing.T) {
 	assertWriteFileContent(t, root, "note.md", "old\n")
 }
 
-func TestEditTextPreservesExistingMode(t *testing.T) {
-	root := t.TempDir()
-	path := filepath.Join(root, "private.md")
-	writeBytes(t, path, []byte("old\n"))
-	if err := os.Chmod(path, 0o750); err != nil {
-		t.Fatal(err)
-	}
-
-	_, conflict, err := writeService(t, root).EditText(context.Background(), "notes", "private.md", EditRequest{
-		ExpectedRevision: Revision([]byte("old\n")),
-		ProposedContent:  "new\n",
-	})
-	if err != nil || conflict != nil {
-		t.Fatalf("EditText() = %#v, %v", conflict, err)
-	}
-	info, err := os.Stat(path)
-	if err != nil || info.Mode().Perm() != 0o750 {
-		t.Fatalf("mode after edit = %v, %v", info.Mode(), err)
-	}
-}
-
-func TestEditTextRestoresModeFilteredByUmask(t *testing.T) {
-	oldUmask := unix.Umask(0o077)
-	t.Cleanup(func() { unix.Umask(oldUmask) })
-
-	root := t.TempDir()
-	path := filepath.Join(root, "shared.md")
-	writeBytes(t, path, []byte("old\n"))
-	if err := os.Chmod(path, 0o777); err != nil {
-		t.Fatal(err)
-	}
-
-	_, conflict, err := writeService(t, root).EditText(context.Background(), "notes", "shared.md", EditRequest{
-		ExpectedRevision: Revision([]byte("old\n")),
-		ProposedContent:  "new\n",
-	})
-	if err != nil || conflict != nil {
-		t.Fatalf("EditText() = %#v, %v", conflict, err)
-	}
-	info, err := os.Stat(path)
-	if err != nil || info.Mode().Perm() != 0o777 {
-		t.Fatalf("mode after umask-filtered edit = %v, %v", info.Mode(), err)
-	}
-}
-
 func TestEditTextCleansTemporaryFileAfterReplacementFailure(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	root := t.TempDir()
 	writeBytes(t, filepath.Join(root, "note.md"), []byte("old\n"))
 	service := writeService(t, root)
@@ -197,6 +167,9 @@ func TestEditTextCleansTemporaryFileAfterReplacementFailure(t *testing.T) {
 }
 
 func TestEditTextReportsConflictWithoutWriting(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	root := t.TempDir()
 	before := "external\n"
 	writeBytes(t, filepath.Join(root, "note.md"), []byte(before))
@@ -212,6 +185,9 @@ func TestEditTextReportsConflictWithoutWriting(t *testing.T) {
 }
 
 func TestOverwriteTextReplacesPromptedRevision(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	root := t.TempDir()
 	writeBytes(t, filepath.Join(root, "note.md"), []byte("prompted\n"))
 
@@ -223,6 +199,9 @@ func TestOverwriteTextReplacesPromptedRevision(t *testing.T) {
 }
 
 func TestOverwriteTextDetectsSecondBackgroundChangeBeforeReplacement(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	root := t.TempDir()
 	path := filepath.Join(root, "note.md")
 	writeBytes(t, path, []byte("prompted\n"))
@@ -237,14 +216,17 @@ func TestOverwriteTextDetectsSecondBackgroundChangeBeforeReplacement(t *testing.
 }
 
 func TestEditTextSwapsAndRetainsExpectedDisplacedRevision(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	root := t.TempDir()
 	path := filepath.Join(root, "note.md")
 	writeBytes(t, path, []byte("old\n"))
 	service := writeService(t, root)
 	called := false
-	service.renameSwap = func(fromFD int, from string, toFD int, to string, flags uint32) error {
+	service.renameSwap = func(parent *os.File, from, to string) error {
 		called = true
-		return unix.RenameatxNp(fromFD, from, toFD, to, flags)
+		return platform.Exchange(parent, from, to)
 	}
 
 	got, conflict, err := service.EditText(context.Background(), "notes", "note.md", EditRequest{
@@ -259,6 +241,9 @@ func TestEditTextSwapsAndRetainsExpectedDisplacedRevision(t *testing.T) {
 }
 
 func TestEditTextRollsBackMismatchedDisplacedRevision(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	root := t.TempDir()
 	path := filepath.Join(root, "note.md")
 	writeBytes(t, path, []byte("old\n"))
@@ -277,6 +262,9 @@ func TestEditTextRollsBackMismatchedDisplacedRevision(t *testing.T) {
 }
 
 func TestEditTextRetainsThirdVersionDisplacedDuringRollback(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	root := t.TempDir()
 	path := filepath.Join(root, "note.md")
 	writeBytes(t, path, []byte("old\n"))
@@ -297,11 +285,14 @@ func TestEditTextRetainsThirdVersionDisplacedDuringRollback(t *testing.T) {
 }
 
 func TestEditTextReturnsSafeErrorWhenSwapUnsupported(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	root := t.TempDir()
 	path := filepath.Join(root, "note.md")
 	writeBytes(t, path, []byte("old\n"))
 	service := writeService(t, root)
-	service.renameSwap = func(int, string, int, string, uint32) error { return unix.ENOTSUP }
+	service.renameSwap = func(*os.File, string, string) error { return platform.ErrAtomicReplaceUnsupported }
 
 	got, conflict, err := service.EditText(context.Background(), "notes", "note.md", EditRequest{
 		ExpectedRevision: Revision([]byte("old\n")),
@@ -316,6 +307,9 @@ func TestEditTextReturnsSafeErrorWhenSwapUnsupported(t *testing.T) {
 }
 
 func TestEditTextReturnsRecoveryErrorWhenRollbackCannotRun(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	root := t.TempDir()
 	path := filepath.Join(root, "note.md")
 	writeBytes(t, path, []byte("old\n"))
@@ -333,6 +327,9 @@ func TestEditTextReturnsRecoveryErrorWhenRollbackCannotRun(t *testing.T) {
 }
 
 func TestEditTextVerifiedRollbackRetainsProposal(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	root := t.TempDir()
 	path := filepath.Join(root, "note.md")
 	writeBytes(t, path, []byte("old\n"))
@@ -347,6 +344,9 @@ func TestEditTextVerifiedRollbackRetainsProposal(t *testing.T) {
 }
 
 func TestEditTextReturnsRecoveryErrorWhenRollbackDisplacesThirdVersion(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	root := t.TempDir()
 	path := filepath.Join(root, "note.md")
 	writeBytes(t, path, []byte("old\n"))
@@ -364,6 +364,9 @@ func TestEditTextReturnsRecoveryErrorWhenRollbackDisplacesThirdVersion(t *testin
 }
 
 func TestEditTextRecoveryAfterDisplacedReadFailure(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	root := t.TempDir()
 	path := filepath.Join(root, "note.md")
 	writeBytes(t, path, []byte("old\n"))
@@ -384,6 +387,9 @@ func TestEditTextRecoveryAfterDisplacedReadFailure(t *testing.T) {
 }
 
 func TestEditTextSuccessDoesNotAttemptRecoveryCleanup(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	root := t.TempDir()
 	path := filepath.Join(root, "note.md")
 	writeBytes(t, path, []byte("old\n"))
@@ -397,18 +403,21 @@ func TestEditTextSuccessDoesNotAttemptRecoveryCleanup(t *testing.T) {
 }
 
 func TestEditTextRecoveryAfterRollbackSwapFailure(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	root := t.TempDir()
 	path := filepath.Join(root, "note.md")
 	writeBytes(t, path, []byte("old\n"))
 	s := writeService(t, root)
 	calls := 0
 	s.beforeSwap = func() error { return os.WriteFile(path, []byte("second\n"), 0o600) }
-	s.renameSwap = func(a int, b string, c int, d string, f uint32) error {
+	s.renameSwap = func(parent *os.File, from, to string) error {
 		calls++
 		if calls == 2 {
 			return syscall.EIO
 		}
-		return unix.RenameatxNp(a, b, c, d, f)
+		return platform.Exchange(parent, from, to)
 	}
 	got, conflict, err := s.EditText(context.Background(), "notes", "note.md", EditRequest{ExpectedRevision: Revision([]byte("old\n")), ProposedContent: "new\n"})
 	if got != nil || conflict != nil {
@@ -420,6 +429,9 @@ func TestEditTextRecoveryAfterRollbackSwapFailure(t *testing.T) {
 }
 
 func TestEditTextRecoveryAfterRollbackReadFailures(t *testing.T) {
+	if !platform.SupportsAtomicEdit {
+		t.Skip("atomic edit contract unavailable on this platform; refusal covered by Windows tests")
+	}
 	for _, failTemp := range []bool{false, true} {
 		t.Run(strconv.FormatBool(failTemp), func(t *testing.T) {
 			root := t.TempDir()

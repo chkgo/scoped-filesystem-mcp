@@ -5,6 +5,26 @@ input and standard output; it does not listen on a network socket. Its YAML
 configuration is shared by Codex tasks and specifies the only filesystem roots
 the server can access.
 
+## Platform status
+
+The shared MCP logic uses build-selected native filesystem operations. macOS
+and Linux implement all tools, subject to the backing filesystem supporting
+atomic rename/exchange. Linux Trash currently supports the home Trash on the
+same filesystem; cross-filesystem moves are rejected without copy/delete.
+
+Windows amd64 is a **partial, not yet natively validated implementation**.
+Native handle-based read/list/search/create/move/permanent-delete operations
+are implemented. `edit_file` and system `trash_path` return
+`atomic_replace_unsupported` and `trash_unsupported` before elicitation or
+mutation. `list_roots` keeps configured `allow` unchanged and reports unavailable
+allowed operations in `unsupported`. Full Windows support and issue #1 remain
+open; see [Windows semantics and validation](docs/windows-filesystem-semantics.md).
+A successful cross-build does not establish native Windows behavior.
+
+The current verification covers macOS arm64 race tests and native Linux arm64
+tests in a Fedora container. CI adds native macOS, Linux, and Windows jobs;
+those hosted runs have not been executed as part of this local change.
+
 ## Security boundary
 
 The configured directory roots and each root's `allow` list are the security
@@ -40,9 +60,43 @@ mkdir -p "$HOME/plugins"
 ln -sfn /absolute/path/to/scoped-filesystem-mcp "$HOME/plugins/scoped-filesystem-mcp"
 ```
 
-The launcher uses that configuration by default. To use another absolute or
-home-relative configuration path, set `SCOPED_FILESYSTEM_MCP_CONFIG` before
-starting Codex.
+The executable selects configuration in this order: `--config PATH`, then
+`SCOPED_FILESYSTEM_MCP_CONFIG`, then the platform default:
+
+| Platform | Default configuration |
+| --- | --- |
+| macOS | `~/.config/scoped-filesystem-mcp/config.yaml` (existing location preserved) |
+| Linux | `$XDG_CONFIG_HOME/scoped-filesystem-mcp/config.yaml`, or `~/.config/scoped-filesystem-mcp/config.yaml` |
+| Windows | `%APPDATA%\scoped-filesystem-mcp\config.yaml` |
+
+Missing configuration is an error; startup never creates or overwrites policy.
+Paths beginning with `~/` are expanded; Windows also accepts `~\`.
+The Unix launcher forwards arguments and lets the executable select configuration.
+
+For Windows, build and start directly from PowerShell:
+
+```powershell
+New-Item -ItemType Directory -Force bin | Out-Null
+go build -o bin/scoped-filesystem-mcp.exe ./cmd/scoped-filesystem-mcp
+& .\bin\scoped-filesystem-mcp.exe --config C:\path\to\config.yaml
+```
+
+Start from `config.example.windows.yaml` and replace its root with your actual
+absolute path. The example deliberately omits unavailable edit and Trash
+operations. Permanent deletion still always requires confirmation.
+
+Create platform-specific plugin archives with:
+
+```bash
+go run ./scripts/package -output dist
+```
+
+Use `-goos windows -goarch amd64` (or another listed platform pair) to build one
+archive. Each archive contains its native executable and a matching `.mcp.json`;
+Windows archives invoke the `.exe` directly without a Unix shell. Unpack the
+archive and register that extracted plugin directory through your host's plugin
+installation flow. The source checkout's `.mcp.json` retains the Unix launcher.
+Build/package automation does not install anything or modify user configuration.
 
 ## Install as a personal plugin
 
@@ -162,7 +216,8 @@ new proposal that retains the external change and retry with the returned
 current revision. For deletion checks, use only `disposable.txt`: decline
 once, verify it remains, move it to Trash, recreate it, and then explicitly
 accept permanent deletion of the recreated file. Verify the trashed first
-copy still exists. Empty `ask` lists let the move/Trash checks distinguish
+copy still exists. On Windows the edit/recycling steps remain unavailable; do
+not mark the full checklist complete. Empty `ask` lists let the move/Trash checks distinguish
 the server's configured policy from any additional host approval.
 
 ```text
@@ -184,16 +239,14 @@ the server's configured policy from any additional host approval.
 
 For the three denial checks, try the harmless outside marker's absolute path,
 `../outside/marker.txt`, and `escape/marker.txt` under `test_vault`; verify no
-contents are returned and the marker is unchanged. Inspect the actual macOS
-Trash after the Trash checks. Keep these checklist items unchecked until
+contents are returned and the marker is unchanged. Inspect the actual system
+Trash and verify restoration after the Trash checks. Keep these checklist items unchecked until
 their visible results have been verified. If any check fails, retain the
 temporary configuration and record the observed result before enabling the
 real vault with its separately reviewed permissions.
 
-## Version 1 limitations and recovery
+## Filesystem limitations and recovery
 
-- Platform support is limited to macOS in version 1. Support for other
-  operating systems is future work, not a project-level restriction.
 - Search results default to 100 and are capped at 1,000. Narrow the root path
   or query instead of expecting a larger result set. Content search is literal;
   it treats valid UTF-8 containing NUL or control bytes other than tab/newline
@@ -210,7 +263,7 @@ real vault with its separately reviewed permissions.
 - Text and binary responses are limited to 10 MiB. Binary writes, batches,
   nested rules, profiles, cross-filesystem copy/delete, and automatic semantic
   merging are not supported.
-- Removals move to macOS Trash. A cross-filesystem Trash move fails rather than
+- On macOS, removals move to macOS Trash. A cross-filesystem Trash move fails rather than
   copying and deleting. The destination directory is opened, revalidated, and
   pinned before the move, including the default `~/.Trash`; replacing its path
   afterward cannot redirect the move. If macOS privacy controls deny opening
@@ -220,8 +273,14 @@ real vault with its separately reviewed permissions.
 - New text files are synced under a private name and atomically published with
   a no-replace operation, so a concurrent destination is never overwritten or
   removed during cleanup.
-- Text replacement verifies the expected revision and uses Darwin's atomic
-  `RENAME_SWAP`. If the backing filesystem does not support atomic swap, the
+- Linux Trash creates freedesktop `files/` and `info/` entries with restoration
+  metadata under `$XDG_DATA_HOME/Trash` (default `~/.local/share/Trash`). Destinations
+  are checked for ownership/permissions and pinned. If a native rename has an
+  uncertain outcome, `trash_outcome_uncertain` retains the metadata for inspection;
+  `trash_metadata_cleanup_failed` reports that a failed attempt could not safely
+  remove its reserved metadata. Neither case falls back to permanent deletion.
+- Text replacement verifies the expected revision and uses macOS `RENAME_SWAP`
+  or Linux `RENAME_EXCHANGE`. If the backing filesystem does not support atomic swap, the
   edit fails with `atomic_replace_unsupported`; it never falls back to a lossy
   ordinary rename. If a concurrent change is discovered after a swap, the
   server restores it when possible.
@@ -269,7 +328,7 @@ real vault with its separately reviewed permissions.
   If an error occurs after some descendants were removed, `partial_delete`
   explicitly reports that the requested tree was only partly deleted.
 - Permanent-delete approval fingerprints the requested entry's type, size,
-  modification time, device, and inode immediately before deletion. It is not
+  modification time and native file identity immediately before deletion. It is not
   an atomic snapshot: another process can still change the target after the
   check, metadata-preserving content changes can evade metadata checks, and a directory
   fingerprint does not cover every descendant.

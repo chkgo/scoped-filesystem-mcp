@@ -7,13 +7,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/chkgo/scoped-filesystem-mcp/internal/platform"
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"golang.org/x/sys/unix"
 
 	"github.com/chkgo/scoped-filesystem-mcp/internal/access"
 	"github.com/chkgo/scoped-filesystem-mcp/internal/config"
@@ -180,6 +181,13 @@ func (s toolServer) gate(req *mcp.CallToolRequest, input any, targets []operatio
 			}
 		}
 	}
+	for _, t := range targets {
+		if err := s.filesystem.OperationError(t.operation); err != nil {
+			result, unexpected := failureResult(filesystem.MapError(t.root, t.path, t.operation, err))
+			preserveRecordRecovery(result, record)
+			return nil, "", result, unexpected
+		}
+	}
 	if permanent {
 		fingerprint, err := s.fingerprint(targets[0])
 		if err != nil {
@@ -302,11 +310,10 @@ func cancelled(record *pendingRecord) *mcp.CallToolResult {
 // Fingerprints describe the requested directory entry, including a final
 // symlink itself. Opening the original parent keeps this aligned with deletion.
 type fileFingerprint struct {
-	mode     uint16
+	mode     os.FileMode
 	size     int64
-	modified unix.Timespec
-	device   int32
-	inode    uint64
+	modified time.Time
+	identity platform.Identity
 }
 
 func (s toolServer) fingerprint(t operationTarget) (fileFingerprint, error) {
@@ -322,9 +329,9 @@ func (s toolServer) fingerprint(t operationTarget) (fileFingerprint, error) {
 	if len(remaining) != 1 {
 		return fileFingerprint{}, &filesystem.Error{Root: t.root, Path: t.path, Operation: t.operation, Code: "path_outside_root"}
 	}
-	var stat unix.Stat_t
-	if err := unix.Fstatat(int(parent.Fd()), remaining[0], &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+	stat, err := platform.LstatAt(parent, remaining[0])
+	if err != nil {
 		return fileFingerprint{}, filesystem.MapError(t.root, t.path, t.operation, err)
 	}
-	return fileFingerprint{mode: stat.Mode, size: stat.Size, modified: stat.Mtim, device: stat.Dev, inode: stat.Ino}, nil
+	return fileFingerprint{mode: stat.Mode, size: stat.Size, modified: stat.ModifiedAt, identity: stat.Identity}, nil
 }

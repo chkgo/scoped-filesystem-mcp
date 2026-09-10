@@ -53,7 +53,13 @@ func (s toolServer) listRoots(_ context.Context, req *mcp.CallToolRequest, input
 		for i, operation := range root.Allow {
 			allow[i] = string(operation)
 		}
-		output.Roots = append(output.Roots, RootOutput{Name: root.Name, Path: root.Path, Allow: allow})
+		unsupported := []string{}
+		for _, op := range root.Allow {
+			if s.filesystem.OperationError(op) != nil {
+				unsupported = append(unsupported, string(op))
+			}
+		}
+		output.Roots = append(output.Roots, RootOutput{Name: root.Name, Path: root.Path, Allow: allow, Unsupported: unsupported})
 	}
 	return successResult(output, "listed configured roots"), nil, nil
 }
