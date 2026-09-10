@@ -94,6 +94,37 @@ func TestWindowsNativeNoReplaceAndIdentity(t *testing.T) {
 	}
 }
 
+func TestWindowsWriteOnlyHandleSupportsMetadataWithoutReadingContent(t *testing.T) {
+	root, path := windowsRoot(t)
+	file, err := OpenFileAt(root, "write-only", os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatalf("open write-only file with safety metadata access: %v", err)
+	}
+	defer file.Close()
+	if _, err := file.WriteString("content"); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := MetadataForFile(file)
+	if err != nil || metadata.Size != 7 || !metadata.Mode.IsRegular() {
+		t.Fatalf("metadata on write-only handle = %+v, %v", metadata, err)
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Read(make([]byte, 1)); !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("write-only handle read = %v, want permission denied", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if content, err := os.ReadFile(filepath.Join(path, "write-only")); err != nil || string(content) != "content" {
+		t.Fatalf("written content = %q, %v", content, err)
+	}
+}
+
 func TestWindowsPinnedParentAndFreshDirectoryIteration(t *testing.T) {
 	root, path := windowsRoot(t)
 	if err := MkdirAt(root, "child", 0700); err != nil {

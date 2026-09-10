@@ -215,6 +215,7 @@ func TestExecutableStdioLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connect to executable: %v; stderr: %s", err, processStderr.String())
 	}
+	defer session.Close()
 
 	initialized := session.InitializeResult()
 	if initialized == nil || initialized.ServerInfo == nil || initialized.ServerInfo.Name != "scoped-filesystem-mcp" {

@@ -120,7 +120,9 @@ func OpenFileAt(parent *os.File, name string, flags int, mode fs.FileMode) (*os.
 	access := uint32(windows.FILE_GENERIC_READ)
 	switch flags & (os.O_WRONLY | os.O_RDWR) {
 	case os.O_WRONLY:
-		access = windows.FILE_GENERIC_WRITE
+		// The pinned handle must support the reparse/metadata check below even
+		// when file contents are write-only. GENERIC_WRITE omits this right.
+		access = windows.FILE_GENERIC_WRITE | windows.FILE_READ_ATTRIBUTES
 	case os.O_RDWR:
 		access = windows.FILE_GENERIC_READ | windows.FILE_GENERIC_WRITE
 	}
